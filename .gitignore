@@ -38,6 +38,9 @@ doc/*.vscode/settings.json
 bak
 benchmarks/
 backup*
+_backups/
+_runlogs/
+_nigeria_tutorial/
 cutouts/
 data/*
 dask-worker-space/
@@ -58,6 +61,12 @@ sample_pypsa_eur
 test/tmp/
 playground/
 !data/nuclear_p_max_pu.csv
+!data/custom_powerplants.csv
+
+# Thesis geothermal input data (small, required by inject_geothermal.py)
+!_thesis_inputs/
+!_thesis_inputs/*.xlsx
+!_thesis_inputs/*.csv
 
 # Specific configuration files
 configs/scenarios/config.*.yaml

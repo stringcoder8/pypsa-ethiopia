@@ -98,7 +98,7 @@ def set_plot_style():
     plt.style.use(
         [
             "classic",
-            "seaborn-white",
+            "seaborn-v0_8-white",  # renamed in matplotlib >=3.6 (was seaborn-white)
             {
                 "axes.grid": False,
                 "grid.linestyle": "--",

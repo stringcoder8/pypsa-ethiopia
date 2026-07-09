@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText:  PyPSA-Earth and PyPSA-Eur Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+
+version: 0.8.0
+tutorial: false      # Ethiopia is not a tutorial country -> use full global databundles
+
+
+run:
+  name: "TZ"             # namespace outputs under results/TZ + resources/TZ (keeps ET baseline intact)
+  shared_cutouts: false  # build a TZ-specific cutout (the shared default cutout covers ET's region)
+
+countries: ["TZ"]
+
+enable:
+  retrieve_databundle: true
+  retrieve_databundle_sector: false   # electricity-only workflow; skip large sector bundles
+  retrieve_cutout: false      # don't download the NG tutorial cutout
+  build_cutout: true          # build a fresh ET cutout from ERA5 (CDS key present)
+  build_natura_raster: false  # use bundled data/natura/natura.tiff (copy_defaultnatura_tiff); avoids flaky WDPA download
+  progress_bar: false
+
+scenario:
+  clusters: [6]
+  opts: [Co2L-4H]
+
+snapshots:
+  start: "2013-03-1"
+  end: "2013-03-7"
+
+
+clean_osm_data_options:
+  threshold_voltage: 35000
+
+base_network:
+  min_voltage_substation_offshore: 35000
+  min_voltage_rebase_voltage: 35000
+
+
+electricity:
+  co2limit: 1.487e+9
+  co2base: 1.487e+9
+  automatic_emission: true
+  # Tanzania is coastal -> KEEP offshore wind (config.default values).
+  renewable_carriers: [solar, onwind, offwind-ac, offwind-dc, hydro]
+  extendable_carriers:
+    Generator: [solar, onwind, offwind-ac, offwind-dc, OCGT]
+    StorageUnit: []
+    Store: [battery, H2]
+    Link: []
+
+
+atlite:
+  default: cutout-2013-era5
+  cutouts:
+    cutout-2013-era5:
+      module: era5
+      dx: 0.3              # ~33 km; extent auto-set from countries (ET), time from snapshots
+      dy: 0.3
+
+renewable:
+  hydro:
+    hydrobasins_level: 4
+    hydro_max_hours: "energy_capacity_totals_by_country"
+
+
+solving:
+  solver:
+    name: gurobi
+    options: gurobi-default

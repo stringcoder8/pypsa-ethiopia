@@ -152,7 +152,7 @@ if config["enable"].get("retrieve_databundle", True):
             expand(
                 "{file}", file=datafiles_retrivedatabundle(config, bundles_to_download)
             ),
-            directory("data/landcover"),
+            # directory("data/landcover"),  # removed: WDPA unused (build_natura_raster=false); avoids pre-job dir wipe
         log:
             "logs/" + RDIR + "retrieve_databundle.log",
         benchmark:

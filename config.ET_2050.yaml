@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText:  PyPSA-Earth and PyPSA-Eur Authors
+#
+# SPDX-License-Identifier: CC0-1.0
+#
+# Per-year run config — HORIZON YEAR 2050. Copy this over config.yaml (or run
+# with `snakemake --configfile config.ET_2050.yaml ...`) before building this
+# year's network. See MODELING_PLAN.md §3a/§3b/§6 and the note at the bottom
+# of this file for what this config does and does NOT yet cover.
+
+version: 0.8.0
+tutorial: false      # Ethiopia is not a tutorial country -> use full global databundles
+
+run:
+  name: "ET_2050"        # namespaces outputs under results/ET_2050 + resources/ET_2050
+  shared_cutouts: true    # reuse the shared ET cutout (same weather year, 2013, across all horizon years)
+
+countries: ["ET"]
+
+enable:
+  retrieve_databundle: true
+  retrieve_databundle_sector: false   # electricity-only workflow; skip large sector bundles
+  retrieve_cutout: false      # don't download the NG tutorial cutout
+  build_cutout: true          # build a fresh ET cutout from ERA5 (CDS key present)
+  build_natura_raster: false  # use bundled data/natura/natura.tiff (copy_defaultnatura_tiff); avoids flaky WDPA download
+  progress_bar: false
+
+scenario:
+  clusters: [6]
+  # Test-run compromise: full calendar year of snapshots (below) resampled to
+  # weekly resolution (168H = 168 hours/1 week per timestep, ~52 snapshots/yr)
+  # instead of native hourly/4H — cheap to solve, covers seasonal (dry-season)
+  # timing that a 1-week window can't. NOT the thesis-reportable full-year
+  # hourly build (MODELING_PLAN.md §3e locks that in for final numbers) — this
+  # is a coarser dev/test config only.
+  opts: [168H]   # CO2L dropped: clean-by-construction framing instead (see electricity: below, MODELING_PLAN.md §3d)
+
+snapshots:
+  # Weather year stays 2013 for every horizon year (§3e) — only costs and
+  # demand below change to represent 2030/2040/2050.
+  start: "2013-01-01"
+  end: "2013-12-31"
+
+
+clean_osm_data_options:
+  threshold_voltage: 35000
+
+base_network:
+  min_voltage_substation_offshore: 35000
+  min_voltage_rebase_voltage: 35000
+
+
+electricity:
+  # use the curated EEP fleet (data/custom_powerplants.csv) instead of powerplantmatching
+  custom_powerplants: replace
+  powerplants_filter: (DateIn <= 2026 or DateIn != DateIn)   # keep operational + under-construction
+  # Clean-by-construction framing (MODELING_PLAN.md §3d): no CO2-constraint
+  # machinery used (Co2L dropped from scenario.opts above). OCGT is excluded
+  # from extendable_carriers below, so no new fossil capacity can ever be
+  # built; only the existing ~99 MW diesel fleet exists, frozen. The
+  # load-shedding backstop (solving.options.load_shedding) makes unserved
+  # energy the real constraint-relief valve instead of a CO2 cap.
+  # Ethiopia is landlocked -> drop offshore wind (offwind-ac/-dc) per config.default note;
+  # all other carriers kept at config.default values.
+  renewable_carriers: [solar, onwind, hydro]
+  extendable_carriers:
+    Generator: [solar, onwind]
+    StorageUnit: []
+    Store: [battery, H2]
+    Link: []
+
+
+atlite:
+  default: cutout-2013-era5
+  cutouts:
+    cutout-2013-era5:
+      module: era5
+      dx: 0.3              # ~33 km; extent auto-set from countries (ET), time from snapshots
+      dy: 0.3
+
+renewable:
+  hydro:
+    hydrobasins_level: 4
+    hydro_max_hours: "energy_capacity_totals_by_country"
+    # Default normalization (irena year=2023, multiplier=1.1) pins national hydro
+    # energy to ~17 TWh/yr -- Ethiopia's PRE-GERD level. The fleet here already
+    # includes GERD (5,150 MW) + Koysha (2,160 MW, DateIn 2025), so that anchor
+    # starves them of water (GERD alone came out at ~3% CF). No IRENA year yet
+    # reflects a fully-operational GERD (2024 generation is unreported: 0 GWh in
+    # the IRENA 2025H2 extract), so re-anchor on 2021 (last real year with NEITHER
+    # GERD nor Koysha online -> genuinely the "rest of fleet" total) and scale up
+    # via the multiplier to include their expected full design output:
+    #   rest-of-fleet, IRENA 2021 actual         14,942.83 GWh  (4,071 MW -> CF 0.42)
+    #   + GERD, official design annual output    15,759.00 GWh  (widely cited target)
+    #   + Koysha, est. at fleet-avg CF 0.42       ~7,929.00 GWh  (2,160 MW; no design
+    #                                                             figure available yet)
+    #   = target national hydro energy           ~38,631 GWh/yr
+    #   multiplier = 38,631 / 14,942.83 (2021)   = 2.585
+    normalization:
+      method: irena
+      year: 2021
+    multiplier: 2.585
+
+# --- Horizon-year settings (MODELING_PLAN.md §3b) ---
+# These two must move together with the year in the filename. This sets the
+# GEGIS "Low" demand scenario directly. The "High" (Gebremeskel HEG) scenario
+# is NOT produced by this config alone — see the note at the bottom of this
+# file.
+costs:
+  year: 2050   # selects costs_2050.csv (technology cost projections)
+
+load_options:
+  source: "gegis"
+  weather_year: 2013
+  prediction_year: 2050   # GEGIS demand projection year = Low demand scenario
+
+
+solving:
+  options:
+    # Value of Lost Load in EUR/kWh -> load-shedding generator marginal cost.
+    # 1.0 EUR/kWh (~1000 EUR/MWh) = Ethiopia-sourced central VOLL (MODELING_PLAN.md §7).
+    # Replaces the European default of 100 EUR/kWh. Sensitivity: 0.25 / 5.0.
+    load_shedding: 1.0
+  solver:
+    name: gurobi
+    options: gurobi-default
+
+# --- What this config does NOT cover (see MODELING_PLAN.md §6) ---
+# This config builds ONE network for 2050 at GEGIS ("Low") demand, normal
+# hydro, geothermal not yet injected. To get the other main-factorial cells
+# for this year from this same built network:
+#   - Geothermal on/off  -> inject_geothermal.py (implemented; --frozen = off).
+#     Currently "on" uses the full ~4.1 GW JICA cap, which happens to MATCH
+#     the §3a year-phased ceiling at 2050 (full resource unlocked) — this is
+#     the one horizon year where the missing --year phasing doesn't matter.
+#   - Hydro dry (-50% inflow, §3c) -> NOT YET IMPLEMENTED as a script.
+#   - HEG ("High") demand (§3b: GEGIS + flat industrial increment) -> NOT YET
+#     IMPLEMENTED as a script.

@@ -175,13 +175,13 @@ databundles:
   # global data for hydrobasins
   bundle_hydrobasins:
     countries: [Earth]
-    tutorial: false
+    tutorial: true   # deselected: hybas_world.shp staged manually from hybas_af (hydrosheds flaky + deletes file pre-download)
     category: hydrobasins
     destination: "data/hydrobasins"
     urls:
       hydrobasins:
         base_url: https://data.hydrosheds.org/file/HydroBASINS/standard/
-        suffixes: ["af", "ar", "as", "au", "eu", "gr", "na", "sa", "si"]
+        suffixes: ["af"]   # Ethiopia is in Africa; global merge not needed (was: af,ar,as,au,eu,gr,na,sa,si)
     unzip: true
     output:
     - data/hydrobasins/hybas_world.shp
@@ -189,7 +189,7 @@ databundles:
   # DemandCast dataset for electricity demand
   demandcast_full:
     countries: [Earth]
-    tutorial: false
+    tutorial: true   # deselected from full runs: parquet staged manually at data/demand/ (zenodo flaky in-script)
     category: el_demand
     destination: "data/demand"
     urls:
@@ -215,7 +215,7 @@ databundles:
   # Original source: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2025/Jul/IRENA_Statistics_Extract_2025H2.xlsx
   bundle_irena_statistics:
     countries: [Earth]
-    tutorial: false
+    tutorial: true   # deselected: IRENA xlsx staged manually at data/ (github flaky in-script)
     category: irena
     destination: "data"
     urls:
@@ -444,6 +444,7 @@ databundles:
   # data bundle containing the protected data for the whole world
   bundle_landcover_earth:
     countries: [Earth]
+    tutorial: true   # deselected: WDPA/protectedplanet always fails; build_natura_raster=false uses bundled natura.tiff
     category: landcover
     destination: "data/landcover/world_protected_areas"
     urls:
