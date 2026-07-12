@@ -93,6 +93,16 @@ The grid is assembled from those inputs through a chain of steps. Conceptually:
 6. **Add electricity** — assemble everything into one network: attach the fleet
    (each plant becomes a generator; reservoir hydro becomes a **storage unit**
    with an inflow series), the demand, the costs, and the technology carriers.
+6b. **Calibrate hydro inflow** (`calibrate_hydro_inflow.py networks/elec.nc`) —
+   atlite allocates runoff by the basin a plant *sits in*, which starves plants
+   fed by a large upstream catchment (GERD: 46% of fleet capacity but ~15% of
+   modeled water, CF 0.10 instead of design 0.35). This script rescales each
+   plant's inflow to its per-plant annual target (GERD = 15,759 GWh design;
+   others = p_nom × the pre-GERD fleet CF 0.42, IRENA 2021), keeping each
+   plant's ERA5 seasonal shape. National total ≈ 38.6 TWh/yr.
+   ⚠️ It edits `elec.nc` in place — **re-run it after any `add_electricity`
+   re-run**, then delete `networks/elec_s*.nc` + the solved result so the
+   downstream rules rebuild from the calibrated file.
 7. **Simplify & cluster** — merge the detailed grid down to the chosen number of
    nodes (e.g. 6) so the optimisation is tractable, preserving the main flows.
 8. **Add storage options** — make battery / hydrogen storage available as build
@@ -162,9 +172,9 @@ mechanism, geothermal capacity basis, hydro normalization — see
 
 | Date | Run hash (git) | Config / snapshots | Demand (TWh/yr) | Hydro share (%) | Diesel share (%) | Unserved (%) | Pass? | Notes |
 |---|---|---|---|---|---|---|---|---|
-| | | | | | | | | |
+| 2026-07-12 | beef38d3 (+calibrate_hydro_inflow.py) | 168H weekly, full-year 2013, clean-by-construction | 15.97 | 98.3 (+1.6 ror) | 0.0 | 0.0 | ✅* | GERD at design 15,759 GWh (CF 0.35); national inflow 38.1 TWh (fleet CF 0.39). *Hydro share exceeds the old ~84% target — expected: that target was pre-GERD; with GERD at design output and inflow > demand, free hydro crowds out wind/solar dispatch (degenerate — both zero marginal cost). Consider updating the §5 target to ~90–99% for the GERD-era fleet. |
 
-Targets (§5): demand ~16.5 TWh ±5% · hydro ~84% ±5pp · diesel <1% · unserved <0.5%.
+Targets (§5): demand ~16.5 TWh ±5% · hydro ~84% ±5pp (pre-GERD statistic — see note above) · diesel <1% · unserved <0.5%.
 
 ---
 

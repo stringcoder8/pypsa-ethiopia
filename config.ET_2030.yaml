@@ -20,7 +20,7 @@ enable:
   retrieve_databundle: true
   retrieve_databundle_sector: false   # electricity-only workflow; skip large sector bundles
   retrieve_cutout: false      # don't download the NG tutorial cutout
-  build_cutout: true          # build a fresh ET cutout from ERA5 (CDS key present)
+  build_cutout: false     # full-year 2013 cutout already built (2026-07-12); guard against overwrite
   build_natura_raster: false  # use bundled data/natura/natura.tiff (copy_defaultnatura_tiff); avoids flaky WDPA download
   progress_bar: false
 

@@ -243,15 +243,26 @@ def inject(n, sites, extendable=True, frozen_today_mw=FROZEN_TODAY_MW):
         assigned[s["Name"]] = bus
 
     if not extendable:
-        # "frozen" reference: only today's plants exist, capped, no expansion.
-        # Keep the cheapest site (proxy for Aluto-Langano today) at FROZEN_TODAY_MW.
+        # "frozen" reference: only today's plants exist, no expansion.
+        # The curated fleet (data/custom_powerplants.csv) already contains the
+        # real Aluto-Langano (7.3 MW), so if fleet geothermal is present we zero
+        # ALL injected sites — otherwise (old powerplantmatching fleets that
+        # missed Aluto) keep the cheapest site as a FROZEN_TODAY_MW proxy.
+        injected = {f"geothermal {nm}" for nm in assigned}
+        fleet_geo_mw = n.generators.loc[
+            (n.generators.carrier == GEO_CARRIER)
+            & (~n.generators.index.isin(injected)), "p_nom"].sum()
+        proxy_needed = fleet_geo_mw < 1.0
         cheapest = sites.sort_values("lcoe_usd_mwh").iloc[0]["Name"]
         for nm in list(assigned):
             g = f"geothermal {nm}"
-            if nm == cheapest:
+            if proxy_needed and nm == cheapest:
                 n.generators.loc[g, ["p_nom", "p_nom_max"]] = frozen_today_mw, frozen_today_mw
             else:
                 n.generators.loc[g, ["p_nom", "p_nom_max"]] = 0.0, 0.0
+        print(f"   frozen mode: fleet geothermal {fleet_geo_mw:.1f} MW "
+              + ("(no proxy added)" if not proxy_needed
+                 else f"absent -> {frozen_today_mw} MW proxy at cheapest site"))
 
     n_b = sites.groupby([nearest_bus(buses, r.lon, r.lat) for r in sites.itertuples()]).size()
     print(f"   added {len(sites)} geothermal generators across {n_b.shape[0]} bus(es): "

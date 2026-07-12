@@ -49,7 +49,7 @@ def apply_drought(n, factor):
     ror_cols = n.generators_t.p_max_pu.columns.intersection(ror)
     n.generators_t.p_max_pu[ror_cols] = n.generators_t.p_max_pu[ror_cols] * factor
 
-    print(f"   drought factor ×{factor:.2f} (−{(1 - factor) * 100:.0f}%)")
+    print(f"   drought factor x{factor:.2f} (-{(1 - factor) * 100:.0f}%)")
     print(f"   reservoir hydro: {len(inflow_cols)} unit(s), "
           f"inflow {inflow_before:.0f} -> {inflow_after:.0f} GWh/yr")
     print(f"   run-of-river:    {len(ror_cols)} generator(s) scaled")
