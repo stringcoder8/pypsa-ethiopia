@@ -12,8 +12,11 @@ backstop, then optimises.
 VOLL = 1.0 EUR/kWh (=1,000 EUR/MWh) — the Ethiopia-sourced central value
 (MODELING_PLAN.md §7); same as config.yaml solving.options.load_shedding.
 
+Solver defaults to gurobi (laptop, hostid-locked license). On the server, pass
+--solver highs (no license needed; matches config.ET_*.yaml's server override).
+
 USAGE
-    python solve_scenario.py cell_unsolved.nc cell_solved.nc [--voll 1.0]
+    python solve_scenario.py cell_unsolved.nc cell_solved.nc [--voll 1.0] [--solver gurobi|highs]
 """
 import argparse
 import pypsa
@@ -40,12 +43,14 @@ def main():
     p.add_argument("in_path")
     p.add_argument("out_path")
     p.add_argument("--voll", type=float, default=1.0, help="EUR/kWh (default 1.0)")
+    p.add_argument("--solver", default="gurobi", choices=["gurobi", "highs"],
+                   help="gurobi (laptop, default) or highs (server, no license needed)")
     args = p.parse_args()
 
     print(f"Loading {args.in_path} ...")
     n = pypsa.Network(args.in_path)
     add_load_shedding(n, args.voll)
-    status, cond = n.optimize(solver_name="gurobi")
+    status, cond = n.optimize(solver_name=args.solver)
     print(f"solve: {status} / {cond}")
     if status != "ok":
         raise SystemExit(f"solve failed: {status} / {cond}")
