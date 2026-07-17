@@ -25,14 +25,22 @@ enable:
   progress_bar: false
 
 scenario:
-  clusters: [6]
-  # Test-run compromise: full calendar year of snapshots (below) resampled to
-  # weekly resolution (168H = 168 hours/1 week per timestep, ~52 snapshots/yr)
-  # instead of native hourly/4H — cheap to solve, covers seasonal (dry-season)
-  # timing that a 1-week window can't. NOT the thesis-reportable full-year
-  # hourly build (MODELING_PLAN.md §3e locks that in for final numbers) — this
-  # is a coarser dev/test config only.
-  opts: [168H]   # CO2L dropped: clean-by-construction framing instead (see electricity: below, MODELING_PLAN.md §3d)
+  # 12 clusters (production, 2026-07-15). Pilot on 2050/dry/HEG/geo at 4H showed
+  # the geothermal result is cluster-robust (4,089 -> 3,922 MW; 32.2 -> 30.9 TWh)
+  # while transmission expansion more than doubles (4.5 -> 10.1 GW) and the VRE
+  # mix shifts toward better-sited solar -- i.e. 12 buys the spatial/transmission
+  # story that 6 could not show. NB cost LEVELS are not comparable across cluster
+  # counts (6cl overstated: 13.1 vs 9.0 bn EUR) -- only compare geo/nogeo deltas
+  # computed at the SAME cluster count.
+  clusters: [12]
+  # Full calendar year of snapshots (below) at 4-hourly resolution (~2,190
+  # snapshots/yr). 4H keeps the diurnal cycle, which the earlier 168H weekly
+  # test config erased (168H made solar look firm and storage pointless:
+  # battery 0 vs 267 GWh, cost -73%). 168H is retained only as a dev/mechanics
+  # config. Whether to refine further to 1H is an open decision -- planned as a
+  # resolution-robustness check on an anchor cell rather than the whole matrix
+  # (1H OOM'd on the 16 GB laptop; needs the server).
+  opts: [4H]   # CO2L dropped: clean-by-construction framing instead (see electricity: below, MODELING_PLAN.md §3d)
 
 snapshots:
   # Weather year stays 2013 for every horizon year (§3e) — only costs and
