@@ -79,9 +79,14 @@ def ensure_base_network(year, clusters, opts, python, snakemake, force=False):
               f"(delete {marker} to force a rebuild)")
         return target
 
+    # defensive: a prior interrupted run (VPN/screen drop) can leave the
+    # working directory locked and/or files marked incomplete -- both are
+    # harmless to clear even when nothing is actually wrong.
+    run([snakemake, "--unlock", "--configfile", configfile])
+
     print(f"[{year}] building base network to elec.nc ...")
     run([snakemake, f"networks/ET_{year}/elec.nc",
-         "-j1", "--rerun-triggers", "mtime", "--configfile", configfile])
+         "-j1", "--rerun-triggers", "mtime", "--rerun-incomplete", "--configfile", configfile])
 
     print(f"[{year}] calibrating hydro inflow (RUNBOOK §6b) ...")
     run([python, "calibrate_hydro_inflow.py", f"networks/ET_{year}/elec.nc"])
@@ -96,7 +101,7 @@ def ensure_base_network(year, clusters, opts, python, snakemake, force=False):
 
     print(f"[{year}] building calibrated {target} ...")
     run([snakemake, str(target), "-j1", "--rerun-triggers", "mtime",
-         "--configfile", configfile])
+         "--rerun-incomplete", "--configfile", configfile])
 
     marker.touch()
     return target
