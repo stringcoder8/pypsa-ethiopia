@@ -38,6 +38,8 @@ USAGE
     python inject_geothermal.py prepared.nc ET_geo_on_2030_unsolved.nc --year 2030
     # "frozen" reference (today's ~7 MW, no expansion):
     python inject_geothermal.py prepared.nc ET_geo_frozen_unsolved.nc --frozen
+    # JICA-cost sensitivity (§7 bias check, ~2-4x higher than Zuffi FLASH):
+    python inject_geothermal.py prepared.nc ET_geo_jica_unsolved.nc --year 2050 --lcoe jica
 """
 
 import sys
@@ -77,7 +79,15 @@ CONN_WACC           = 0.10              # discount rate for the connection annui
 COL_NAME   = ["JICA Site", "Site"]                      # site name
 COL_CAP    = ["installed", "MW"]                         # JICA installed (T5.3)
 COL_CAP_FB = ["mode", "MW"]                              # fallback: JICA mode
-COL_LCOE   = ["Zuffi", "FLASH", "LCOE"]                  # Zuffi FLASH LCOE ($/MWh)
+# LCOE source (§7 bias check): Zuffi FLASH is the central/default case; JICA's own
+# LCOE is ~2-4x higher, used as a sensitivity to test whether geothermal is still
+# chosen at a conservative national cost estimate. 2 sites (Kone, Gedemsa) have no
+# JICA LCOE figure and are dropped when --lcoe jica is used (noted at read time).
+COL_LCOE_BY_SOURCE = {
+    "zuffi": ["Zuffi", "FLASH", "LCOE"],
+    "jica":  ["JICA", "LCOE"],
+}
+COL_LCOE   = COL_LCOE_BY_SOURCE["zuffi"]                 # default; read_sites() picks per lcoe_source
 COL_LAT    = ["Lat"]
 COL_LON    = ["Lon"]
 COL_DIST   = ["distance", "km"]                          # optional
@@ -133,10 +143,11 @@ def pick_col(df, keywords, required=True):
     return None
 
 
-def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET):
+def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET, lcoe_source="zuffi"):
     """Return DataFrame [Name, lon, lat, lcoe_usd_mwh, cap_mw, distance_km].
     Capacity = JICA installed (Table 5.3), falling back to JICA mode.
-    LCOE = Zuffi FLASH LCOE ($/MWh, already levelised).
+    LCOE = Zuffi FLASH (default) or JICA's own LCOE ($/MWh, already levelised),
+    selected via lcoe_source ("zuffi" | "jica") -- see COL_LCOE_BY_SOURCE (§7).
     Rows missing name / capacity / LCOE / coordinates are dropped with a note."""
     path = find_xlsx(xlsx)
     xls = pd.ExcelFile(path)
@@ -149,8 +160,14 @@ def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET):
               f"(available: {xls.sheet_names})")
     df = pd.read_excel(xls, sheet_name=use_sheet)
 
+    lcoe_source = lcoe_source.lower()
+    if lcoe_source not in COL_LCOE_BY_SOURCE:
+        raise ValueError(f"lcoe_source must be one of {list(COL_LCOE_BY_SOURCE)}, got {lcoe_source!r}")
+    col_lcoe_keywords = COL_LCOE_BY_SOURCE[lcoe_source]
+
     c_name = pick_col(df, COL_NAME)
-    c_lcoe = pick_col(df, COL_LCOE)
+    c_lcoe = pick_col(df, col_lcoe_keywords)
+    print(f"   LCOE source: {lcoe_source} (column: {c_lcoe!r})")
     c_lat  = pick_col(df, COL_LAT, required=False)
     c_lon  = pick_col(df, COL_LON, required=False)
     try:
@@ -273,16 +290,21 @@ def inject(n, sites, extendable=True, frozen_today_mw=FROZEN_TODAY_MW):
 
 
 def main():
-    # minimal parser: two positionals (in, out), flag --frozen, option --year[=]YYYY
+    # minimal parser: two positionals (in, out), flag --frozen,
+    # options --year[=]YYYY, --lcoe[=]{zuffi,jica}
     argv = sys.argv[1:]
     frozen = "--frozen" in argv
-    year, pos, i = None, [], 0
+    year, lcoe_source, pos, i = None, "zuffi", [], 0
     while i < len(argv):
         a = argv[i]
         if a == "--frozen":
             i += 1; continue
         if a.startswith("--year"):
             year = int(a.split("=", 1)[1]) if "=" in a else int(argv[i + 1])
+            i += 1 if "=" in a else 2
+            continue
+        if a.startswith("--lcoe"):
+            lcoe_source = a.split("=", 1)[1] if "=" in a else argv[i + 1]
             i += 1 if "=" in a else 2
             continue
         if a.startswith("--"):
@@ -295,7 +317,7 @@ def main():
 
     print(f"Loading {in_path} ...")
     n = pypsa.Network(in_path)
-    sites = read_sites()
+    sites = read_sites(lcoe_source=lcoe_source)
     if year is not None:
         scale = YEAR_SCALE.get(year)
         if scale is None:

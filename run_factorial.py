@@ -107,12 +107,14 @@ def ensure_base_network(year, clusters, opts, python, snakemake, force=False):
     return target
 
 
-def cell_name(year, hydro, demand, geo):
-    return f"{year}_{hydro}_{demand}_{geo}"
+def cell_name(year, hydro, demand, geo, tag=""):
+    suffix = f"_{tag}" if tag else ""
+    return f"{year}_{hydro}_{demand}_{geo}{suffix}"
 
 
-def build_cell(base_net, year, hydro, demand, geo, python, solver, force):
-    name = cell_name(year, hydro, demand, geo)
+def build_cell(base_net, year, hydro, demand, geo, python, solver, force,
+               lcoe="zuffi", tag=""):
+    name = cell_name(year, hydro, demand, geo, tag)
     out_path = SCENARIOS_DIR / f"{name}.nc"
     if out_path.exists() and not force:
         print(f"  [{name}] already solved, skipping (use --force to redo)")
@@ -133,7 +135,10 @@ def build_cell(base_net, year, hydro, demand, geo, python, solver, force):
         current = step
 
     unsolved = TMP_DIR / f"{name}_unsolved.nc"
-    geo_args = ["--frozen"] if geo == "nogeo" else ["--year", str(year)]
+    # nogeo cells freeze geothermal at ~7 MW regardless of cost, so --lcoe is
+    # irrelevant to them; only geo cells pass it through.
+    geo_args = (["--frozen"] if geo == "nogeo"
+                else ["--year", str(year), "--lcoe", lcoe])
     run([python, "inject_geothermal.py", str(current), str(unsolved)] + geo_args)
 
     t0 = time.time()
@@ -152,6 +157,11 @@ def main():
     p.add_argument("--opts", default="4H")
     p.add_argument("--solver", default="gurobi", choices=["gurobi", "highs"],
                    help="gurobi (laptop) or highs (server, default there)")
+    p.add_argument("--lcoe", default="zuffi", choices=["zuffi", "jica"],
+                   help="geothermal LCOE source (§7). 'jica' (~2-4x higher) tags "
+                        "outputs _jica and SKIPS the nogeo twins -- they freeze "
+                        "geothermal at ~7 MW regardless of cost, so they're identical "
+                        "to the zuffi nogeo cells (reuse those for the value delta).")
     p.add_argument("--force", action="store_true",
                    help="rebuild/re-solve even if outputs already exist")
     p.add_argument("--dry-run", action="store_true", help="print the plan, run nothing")
@@ -162,17 +172,24 @@ def main():
     if not args.year and not args.all:
         p.error("give --year YYYY or --all")
     years = YEARS if args.all else [args.year]
+    tag = "" if args.lcoe == "zuffi" else args.lcoe
 
     cells = []
     for year, hydro, demand in itertools.product(years, HYDRO, DEMAND):
         cells.append((year, hydro, demand, "geo"))
-        if hydro == "dry" or args.all_excluded:
+        # nogeo twins are cost-independent -> only produce them on the default
+        # (zuffi) run; a jica run reuses those existing twins.
+        if (hydro == "dry" or args.all_excluded) and args.lcoe == "zuffi":
             cells.append((year, hydro, demand, "nogeo"))
 
     print(f"Plan: {len(years)} base network(s), {len(cells)} cell(s), "
-          f"clusters={args.clusters}, opts={args.opts}, solver={args.solver}")
+          f"clusters={args.clusters}, opts={args.opts}, solver={args.solver}, "
+          f"lcoe={args.lcoe}")
     for c in cells:
-        print(f"   {cell_name(*c)}")
+        print(f"   {cell_name(*c, tag=tag)}")
+    if tag:
+        print(f"   NOTE: nogeo twins skipped ({args.lcoe} is cost-independent for "
+              f"frozen geothermal); value delta uses the existing zuffi nogeo cells.")
     if args.dry_run:
         print("\n--dry-run: stopping here.")
         return
@@ -182,7 +199,8 @@ def main():
         base_net = ensure_base_network(year, args.clusters, args.opts,
                                         args.python, args.snakemake, args.force)
         for (y, hydro, demand, geo) in [c for c in cells if c[0] == year]:
-            build_cell(base_net, y, hydro, demand, geo, args.python, args.solver, args.force)
+            build_cell(base_net, y, hydro, demand, geo, args.python, args.solver,
+                       args.force, lcoe=args.lcoe, tag=tag)
 
     print(f"\nDone. Solved cells are in {SCENARIOS_DIR}/ "
           "-- paste their paths into results_analysis.ipynb.")
