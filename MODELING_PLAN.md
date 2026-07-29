@@ -221,19 +221,55 @@ historically under-delivered (5.2 GW actual in 2023 vs ~20 GW planned by 2025).
 > firm-capacity value is largest. Decision deferred.
 
 Implementation: PyPSA-Earth's load is GEGIS-based, so **Low** uses
-`load_options.prediction_year` directly. **High** is *not* a uniform ×8.4 rescale of
-the peaky GEGIS profile — that would keep a residential/temperature *shape* for what
-is really **industrial** growth (industrial parks run ~24/7 baseload, not with a
-population demand curve). Instead, **High = GEGIS base + a flat industrial
-increment**: keep GEGIS(year) for the residential/commercial base, then add the
-remainder `(HEG − GEGIS)` as a **constant round-the-clock block** applied at the
-industrial-park buses. This both represents industry correctly *and* is the honest
-test for geothermal — flat firm load is exactly what baseload geothermal serves, so a
-peakier scaled profile would actually *understate* geothermal's value.
+`load_options.prediction_year` directly. **High = a uniform ×8.4 rescale** of the
+GEGIS profile to the HEG annual total (`apply_heg_demand.py`), preserving both the
+temporal shape and the spatial distribution across buses.
 
-> A crude uniform `load_options.scale ≈ 8.4×` (at 2050) is kept only as a quick
-> sensitivity — it is *conservative* for the thesis. A potential upper third would
-> raise the flat increment further (Boke HERA ≈ **22×** GEGIS-equivalent at 2050).
+> **Revised 2026-07-29 — this replaces an earlier "flat industrial increment"
+> design.** The previous version kept GEGIS as a residential/commercial base and
+> added `(HEG − GEGIS)` as a constant round-the-clock block, on the reasoning that
+> HEG growth is industrial and industry runs ~24/7. That was withdrawn for two
+> reasons:
+>
+> 1. **It swamped the profile.** The increment is ~87% of the HEG total (2050:
+>    34 TWh GEGIS + 255 TWh increment), so the flat block did not modify the shape —
+>    it *became* the shape. Resulting national load factor 0.98, diurnal swing 1.03.
+>    No real grid is that flat; even Iceland (~80% aluminium smelters) is ~0.94.
+> 2. **It pre-loaded the conclusion.** Flat demand is precisely the shape firm
+>    baseload serves best, and simultaneously the worst case for solar. The earlier
+>    claim that a flat block was *conservative* (and that a peakier profile would
+>    *understate* geothermal's value) was backwards: flat demand is the most
+>    favourable possible demand shape for geothermal.
+>
+> A uniform rescale makes no claim about the composition of demand growth, which is
+> the more neutral assumption to defend in an examination.
+
+**Known limitations of the demand representation (state these in the write-up):**
+
+1. The rescale inherits the GEGIS *shape*, which is materially flatter than
+   Ethiopia's observed load curve. Measured against EEP's national hourly demand
+   curve:
+
+   | | GEGIS (raw hourly) | Observed (EEP) |
+   |---|---|---|
+   | Peak hour | 17:00 | **19:00** |
+   | Trough hour | 00:00 | 03:00 |
+   | Diurnal swing | 1.31 | **2.63** |
+   | Night floor (% of peak) | 77% | **38%** |
+   | Weekday/weekend ratio | 0.98 | should be >1 |
+   | Annual load factor | 0.83 | **~0.67** |
+
+   GEGIS is a GDP/population/temperature regression, not observed load. It carries
+   roughly twice the overnight demand that actually exists and has no evening peak.
+   These two errors bias in *opposite* directions (a high night floor favours firm
+   baseload; a missing evening peak understates the value of firm/storage), so the
+   net effect is not determinable by inspection and is **not** resolved here.
+2. Rescaling assumes demand composition is invariant while the system grows ~8×.
+   Real industrialisation would raise the load factor somewhat, so the true 2050
+   shape likely lies between this profile and a flatter one.
+
+> A potential upper third demand case would rescale further (Boke HERA ≈ **22×**
+> GEGIS-equivalent at 2050).
 
 ### 3c. Drought = a single calibrated ×factor (−50%), not a real-year cutout
 
@@ -618,8 +654,10 @@ optimiser built instead of geothermal when it didn't pick it.
   on its own terms (§7).
 - GEGIS (low) is the empirically accurate demand path; HEG (high) is the
   methodologically rigorous government-ambition ceiling. The high case is modeled as
-  **GEGIS base + a flat industrial increment** (not a uniform rescale), so the
-  industrial load has a realistic baseload shape (§3b).
+  a **uniform rescale of the GEGIS profile** to the HEG annual total, preserving
+  shape — this makes no claim about the composition of demand growth (§3b). The
+  GEGIS shape itself is flatter than Ethiopia's observed load curve; that is a
+  documented limitation, not a modelling choice (§3b).
 - **Drought resilience value and geothermal build volume are expected to peak in
   different corners** (GEGIS/low-demand vs HEG/high-demand respectively) — stated
   as a design expectation, not an anomaly, in §6.

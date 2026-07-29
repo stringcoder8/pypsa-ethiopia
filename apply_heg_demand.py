@@ -3,29 +3,51 @@
 Raise a prepared network's demand from GEGIS (low) to Gebremeskel HEG (high),
 MODELING_PLAN.md §3b.
 
-The high demand case is NOT a uniform rescale of the peaky GEGIS profile — that
-would keep a residential/temperature shape for what is really *industrial*
-growth. Instead:
+    High demand = GEGIS profile, uniformly rescaled to the HEG annual total.
 
-    High demand = GEGIS base  +  flat industrial increment
+Every load is multiplied by the same factor (HEG_target / GEGIS_total), so both
+the temporal shape and the spatial distribution across buses are preserved
+exactly; only the level changes.
 
-The network already carries the GEGIS profile for its build year (set via
-`load_options.prediction_year` in the config). This script keeps that base
-untouched and adds the remainder `(HEG_target − GEGIS_total)` as a
-**constant, round-the-clock block** — industrial parks run ~24/7 baseload, not
-on a population demand curve. The increment is distributed across buses in
-proportion to each bus's existing load share (a defensible first pass; a
-refinement would place it only on designated industrial-park buses — see §3b).
+WHY A UNIFORM RESCALE (and not a flat industrial block)
+-------------------------------------------------------
+An earlier version of this script added the increment as a constant,
+round-the-clock block, reasoning that HEG growth is industrial and industry
+runs ~24/7. That was withdrawn:
 
-Because the added block is time-flat, this is *conservative* for the thesis: a
-peakier profile would understate the value of firm baseload geothermal.
+  - The increment is ~87% of the HEG total (2050: 34 TWh GEGIS + 255 TWh
+    increment), so the flat block did not modify the profile — it *became* the
+    profile, giving a national load factor of 0.98 and a diurnal swing of 1.03.
+    No real grid is that flat; even Iceland, which is ~80% aluminium smelters,
+    is around 0.94.
+  - It also tilted the study toward its own hypothesis. Flat demand is the
+    shape that firm baseload serves best, and it is simultaneously the worst
+    case for solar, so assuming it quietly pre-loaded the conclusion that
+    geothermal is valuable.
 
-HEG targets (TWh/yr, Gebremeskel 2021 High-Economic-Growth, §3b):
-    2030 = 112 · 2040 = 201 · 2050 = 289
+A uniform rescale makes no claim about the composition of demand growth, which
+is the more neutral assumption to defend.
+
+KNOWN LIMITATIONS — state these in the write-up
+------------------------------------------------
+1. The rescale inherits the GEGIS shape, which is flatter than Ethiopia's
+   observed load curve. GEGIS (raw hourly) has a diurnal swing of 1.31, a night
+   floor at 77% of peak, and peaks at 17:00. EEP's measured national curve
+   swings ~2.6, drops to ~38% of peak overnight, and peaks at 19:00. GEGIS also
+   shows no weekday/weekend structure (ratio 0.98).
+2. Rescaling assumes demand composition is invariant while the system grows
+   ~8x. Industrialisation would in reality raise the load factor somewhat, so
+   the true 2050 shape likely sits between this profile and a flatter one.
+
+Both are limitations of the demand data and of the scenario framing, not of the
+rescale itself. Neither is resolved here.
 
 Chain this BEFORE the drought / geothermal transforms:
 
     prepared.nc --[apply_heg_demand]--> --[apply_drought]--> --[inject_geothermal]--> solve
+
+HEG targets (TWh/yr, Gebremeskel 2021 High-Economic-Growth, §3b):
+    2030 = 112 · 2040 = 201 · 2050 = 289
 
 USAGE
 -----
@@ -50,41 +72,40 @@ def load_matrix(n):
 
 def apply_heg(n, target_twh):
     w = n.snapshot_weightings.objective
-    total_hours = float(w.sum())
 
     base = load_matrix(n)
     base_energy_mwh = base.mul(w, axis=0).sum()               # per load, MWh/yr
     base_total_twh = base_energy_mwh.sum() / 1e6
 
-    increment_twh = target_twh - base_total_twh
-    if increment_twh <= 0:
+    if target_twh <= base_total_twh:
         raise SystemExit(
             f"HEG target {target_twh:.0f} TWh <= GEGIS base {base_total_twh:.1f} TWh; "
             "nothing to add (is the network's prediction_year the one you meant?).")
 
-    # flat block, distributed by each load's share of base energy
-    share = base_energy_mwh / base_energy_mwh.sum()
-    flat_total_mw = increment_twh * 1e6 / total_hours          # constant MW over the year
-    add_mw = flat_total_mw * share                             # per load, constant MW
+    factor = target_twh / base_total_twh
 
-    # write the time-flat increment onto every snapshot
+    # uniform multiplicative rescale: shape and bus shares both preserved
     for ld in n.loads.index:
-        col = base[ld] + add_mw[ld]
-        n.loads_t.p_set[ld] = col
+        n.loads_t.p_set[ld] = base[ld] * factor
     # any load that was static-only is now time-varying; clear its scalar p_set
     n.loads.loc[:, "p_set"] = 0.0
 
-    new_total_twh = load_matrix(n).mul(w, axis=0).sum().sum() / 1e6
+    new = load_matrix(n)
+    new_total_twh = new.mul(w, axis=0).sum().sum() / 1e6
+    nat = new.sum(axis=1)
+    peak, mean = nat.max(), (nat * w).sum() / w.sum()
     print(f"   GEGIS base demand : {base_total_twh:6.1f} TWh/yr")
     print(f"   HEG target        : {target_twh:6.1f} TWh/yr")
-    print(f"   flat increment    : +{increment_twh:6.1f} TWh/yr "
-          f"= {flat_total_mw:,.0f} MW constant, spread over {len(n.loads.index)} bus load(s)")
+    print(f"   rescale factor    : x{factor:.3f} (uniform, shape preserved)")
     print(f"   realized new total: {new_total_twh:6.1f} TWh/yr")
+    print(f"   national peak {peak/1e3:.2f} GW | mean {mean/1e3:.2f} GW "
+          f"| load factor {mean/peak:.3f}")
     return n
 
 
 def main():
-    p = argparse.ArgumentParser(description="Raise demand GEGIS -> HEG (flat industrial increment).")
+    p = argparse.ArgumentParser(
+        description="Raise demand GEGIS -> HEG (uniform rescale, shape preserved).")
     p.add_argument("in_path")
     p.add_argument("out_path")
     p.add_argument("--year", type=int, choices=sorted(HEG_TARGET_TWH),
