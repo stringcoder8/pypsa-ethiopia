@@ -113,7 +113,7 @@ def cell_name(year, hydro, demand, geo, tag=""):
 
 
 def build_cell(base_net, year, hydro, demand, geo, python, solver, force,
-               lcoe="zuffi", tag=""):
+               lcoe="zuffi", tag="", blend=None):
     name = cell_name(year, hydro, demand, geo, tag)
     out_path = SCENARIOS_DIR / f"{name}.nc"
     if out_path.exists() and not force:
@@ -135,10 +135,14 @@ def build_cell(base_net, year, hydro, demand, geo, python, solver, force,
         current = step
 
     unsolved = TMP_DIR / f"{name}_unsolved.nc"
-    # nogeo cells freeze geothermal at ~7 MW regardless of cost, so --lcoe is
-    # irrelevant to them; only geo cells pass it through.
-    geo_args = (["--frozen"] if geo == "nogeo"
-                else ["--year", str(year), "--lcoe", lcoe])
+    # nogeo cells freeze geothermal at ~7 MW regardless of cost, so the cost
+    # option is irrelevant to them; only geo cells pass it through.
+    if geo == "nogeo":
+        geo_args = ["--frozen"]
+    elif blend is not None:
+        geo_args = ["--year", str(year), "--lcoe-blend", str(blend)]
+    else:
+        geo_args = ["--year", str(year), "--lcoe", lcoe]
     run([python, "inject_geothermal.py", str(current), str(unsolved)] + geo_args)
 
     t0 = time.time()
@@ -162,6 +166,12 @@ def main():
                         "outputs _jica and SKIPS the nogeo twins -- they freeze "
                         "geothermal at ~7 MW regardless of cost, so they're identical "
                         "to the zuffi nogeo cells (reuse those for the value delta).")
+    p.add_argument("--lcoe-blend", type=float, default=None, metavar="ALPHA",
+                   help="Middle cost scenario: per-site interpolation "
+                        "lcoe = zuffi + ALPHA*(jica - zuffi). Overrides --lcoe. "
+                        "0.5 gives the Low/Middle/High set; outputs tagged "
+                        "_blend<NN> (e.g. _blend50). Like --lcoe jica, nogeo twins "
+                        "are skipped (cost-independent).")
     p.add_argument("--force", action="store_true",
                    help="rebuild/re-solve even if outputs already exist")
     p.add_argument("--dry-run", action="store_true", help="print the plan, run nothing")
@@ -172,23 +182,31 @@ def main():
     if not args.year and not args.all:
         p.error("give --year YYYY or --all")
     years = YEARS if args.all else [args.year]
-    tag = "" if args.lcoe == "zuffi" else args.lcoe
+    blend = args.lcoe_blend
+    if blend is not None:
+        if not 0.0 <= blend <= 1.0:
+            p.error(f"--lcoe-blend must be in [0,1], got {blend}")
+        tag = f"blend{round(blend * 100):02d}"       # 0.5 -> blend50
+        cost_label = f"blend {blend:g} (zuffi->jica)"
+    else:
+        tag = "" if args.lcoe == "zuffi" else args.lcoe
+        cost_label = args.lcoe
 
     cells = []
     for year, hydro, demand in itertools.product(years, HYDRO, DEMAND):
         cells.append((year, hydro, demand, "geo"))
         # nogeo twins are cost-independent -> only produce them on the default
-        # (zuffi) run; a jica run reuses those existing twins.
-        if (hydro == "dry" or args.all_excluded) and args.lcoe == "zuffi":
+        # (zuffi) run; jica/blend runs reuse those existing twins.
+        if (hydro == "dry" or args.all_excluded) and not tag:
             cells.append((year, hydro, demand, "nogeo"))
 
     print(f"Plan: {len(years)} base network(s), {len(cells)} cell(s), "
           f"clusters={args.clusters}, opts={args.opts}, solver={args.solver}, "
-          f"lcoe={args.lcoe}")
+          f"cost={cost_label}")
     for c in cells:
         print(f"   {cell_name(*c, tag=tag)}")
     if tag:
-        print(f"   NOTE: nogeo twins skipped ({args.lcoe} is cost-independent for "
+        print(f"   NOTE: nogeo twins skipped ({cost_label} is cost-independent for "
               f"frozen geothermal); value delta uses the existing zuffi nogeo cells.")
     if args.dry_run:
         print("\n--dry-run: stopping here.")
@@ -200,7 +218,7 @@ def main():
                                         args.python, args.snakemake, args.force)
         for (y, hydro, demand, geo) in [c for c in cells if c[0] == year]:
             build_cell(base_net, y, hydro, demand, geo, args.python, args.solver,
-                       args.force, lcoe=args.lcoe, tag=tag)
+                       args.force, lcoe=args.lcoe, tag=tag, blend=blend)
 
     print(f"\nDone. Solved cells are in {SCENARIOS_DIR}/ "
           "-- paste their paths into results_analysis.ipynb.")

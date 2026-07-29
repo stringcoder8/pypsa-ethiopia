@@ -40,6 +40,8 @@ USAGE
     python inject_geothermal.py prepared.nc ET_geo_frozen_unsolved.nc --frozen
     # JICA-cost sensitivity (§7 bias check, ~2-4x higher than Zuffi FLASH):
     python inject_geothermal.py prepared.nc ET_geo_jica_unsolved.nc --year 2050 --lcoe jica
+    # Middle cost scenario: 50% between Zuffi (Low) and JICA (High), per site:
+    python inject_geothermal.py prepared.nc ET_geo_blend50_unsolved.nc --year 2050 --lcoe-blend 0.5
 """
 
 import sys
@@ -88,6 +90,22 @@ COL_LCOE_BY_SOURCE = {
     "jica":  ["JICA", "LCOE"],
 }
 COL_LCOE   = COL_LCOE_BY_SOURCE["zuffi"]                 # default; read_sites() picks per lcoe_source
+
+# --- Middle cost scenario (--lcoe-blend ALPHA) --------------------------------
+# Linear per-site interpolation  lcoe = zuffi + ALPHA * (jica - zuffi), giving a
+# Low (Zuffi, ALPHA=0) / Middle (ALPHA=0.5) / High (JICA, ALPHA=1) scenario set.
+#
+# PROXY SUBSTITUTION: Gedemsa and Kone have NO JICA LCOE at all (which is why the
+# pure --lcoe jica runs drop them). Dropping them from the blend too would change
+# the site set between scenarios and make the Low/Middle/High comparison
+# inconsistent, so each borrows the JICA LCOE of a comparable site instead:
+#   Gedemsa <- Tulu Moye (103.7 $/MWh)   Kone <- Meteka (73.1 $/MWh)
+# These are STAND-INS, not JICA estimates for those sites -- state this wherever
+# blend results are reported. Both are small (37 + 14 MW of ~4.1 GW).
+JICA_LCOE_PROXY = {
+    "gedemsa": ("Tulu Moye", 103.7),
+    "kone":    ("Meteka",     73.1),
+}
 COL_LAT    = ["Lat"]
 COL_LON    = ["Lon"]
 COL_DIST   = ["distance", "km"]                          # optional
@@ -143,11 +161,14 @@ def pick_col(df, keywords, required=True):
     return None
 
 
-def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET, lcoe_source="zuffi"):
+def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET, lcoe_source="zuffi", blend=None):
     """Return DataFrame [Name, lon, lat, lcoe_usd_mwh, cap_mw, distance_km].
     Capacity = JICA installed (Table 5.3), falling back to JICA mode.
     LCOE = Zuffi FLASH (default) or JICA's own LCOE ($/MWh, already levelised),
     selected via lcoe_source ("zuffi" | "jica") -- see COL_LCOE_BY_SOURCE (§7).
+    If `blend` is a float in [0,1] it OVERRIDES lcoe_source and interpolates
+    per site: lcoe = zuffi + blend*(jica - zuffi), using JICA_LCOE_PROXY for the
+    two sites with no JICA figure (documented substitution -- see that constant).
     Rows missing name / capacity / LCOE / coordinates are dropped with a note."""
     path = find_xlsx(xlsx)
     xls = pd.ExcelFile(path)
@@ -163,11 +184,38 @@ def read_sites(xlsx=GEO_XLSX, sheet=GEO_SHEET, lcoe_source="zuffi"):
     lcoe_source = lcoe_source.lower()
     if lcoe_source not in COL_LCOE_BY_SOURCE:
         raise ValueError(f"lcoe_source must be one of {list(COL_LCOE_BY_SOURCE)}, got {lcoe_source!r}")
-    col_lcoe_keywords = COL_LCOE_BY_SOURCE[lcoe_source]
 
     c_name = pick_col(df, COL_NAME)
-    c_lcoe = pick_col(df, col_lcoe_keywords)
-    print(f"   LCOE source: {lcoe_source} (column: {c_lcoe!r})")
+    names_raw = df[pick_col(df, COL_NAME)].astype(str).str.strip()
+
+    if blend is None:
+        c_lcoe = pick_col(df, COL_LCOE_BY_SOURCE[lcoe_source])
+        print(f"   LCOE source: {lcoe_source} (column: {c_lcoe!r})")
+        lcoe_values = pd.to_numeric(df[c_lcoe], errors="coerce")
+    else:
+        blend = float(blend)
+        if not 0.0 <= blend <= 1.0:
+            raise ValueError(f"--lcoe-blend must be in [0,1], got {blend}")
+        c_z = pick_col(df, COL_LCOE_BY_SOURCE["zuffi"])
+        c_j = pick_col(df, COL_LCOE_BY_SOURCE["jica"])
+        z = pd.to_numeric(df[c_z], errors="coerce")
+        j = pd.to_numeric(df[c_j], errors="coerce")
+        # fill the two missing JICA values with their documented proxies
+        applied = []
+        for i, nm in names_raw.items():
+            key = nm.lower()
+            for pk, (src, val) in JICA_LCOE_PROXY.items():
+                if pk in key and not np.isfinite(j.get(i, np.nan)):
+                    j.at[i] = val
+                    applied.append(f"{nm}<-{src}({val})")
+        lcoe_values = z + blend * (j - z)
+        print(f"   LCOE source: BLEND alpha={blend:g} "
+              f"(0=Zuffi {c_z!r}, 1=JICA {c_j!r})")
+        if applied:
+            print(f"   JICA proxy substitutions applied: {', '.join(applied)}")
+    # a single synthetic column keeps the rest of the function unchanged
+    c_lcoe = "_lcoe_selected"
+    df[c_lcoe] = lcoe_values
     c_lat  = pick_col(df, COL_LAT, required=False)
     c_lon  = pick_col(df, COL_LON, required=False)
     try:
@@ -291,16 +339,21 @@ def inject(n, sites, extendable=True, frozen_today_mw=FROZEN_TODAY_MW):
 
 def main():
     # minimal parser: two positionals (in, out), flag --frozen,
-    # options --year[=]YYYY, --lcoe[=]{zuffi,jica}
+    # options --year[=]YYYY, --lcoe[=]{zuffi,jica}, --lcoe-blend[=]ALPHA
     argv = sys.argv[1:]
     frozen = "--frozen" in argv
-    year, lcoe_source, pos, i = None, "zuffi", [], 0
+    year, lcoe_source, blend, pos, i = None, "zuffi", None, [], 0
     while i < len(argv):
         a = argv[i]
         if a == "--frozen":
             i += 1; continue
         if a.startswith("--year"):
             year = int(a.split("=", 1)[1]) if "=" in a else int(argv[i + 1])
+            i += 1 if "=" in a else 2
+            continue
+        # NB: check --lcoe-blend BEFORE --lcoe, otherwise the prefix match eats it
+        if a.startswith("--lcoe-blend"):
+            blend = float(a.split("=", 1)[1]) if "=" in a else float(argv[i + 1])
             i += 1 if "=" in a else 2
             continue
         if a.startswith("--lcoe"):
@@ -317,7 +370,7 @@ def main():
 
     print(f"Loading {in_path} ...")
     n = pypsa.Network(in_path)
-    sites = read_sites(lcoe_source=lcoe_source)
+    sites = read_sites(lcoe_source=lcoe_source, blend=blend)
     if year is not None:
         scale = YEAR_SCALE.get(year)
         if scale is None:
