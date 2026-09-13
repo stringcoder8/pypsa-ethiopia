@@ -10,9 +10,21 @@ generators built from the JICA Master Plan site inventory:
   * capped at the site's JICA installed capacity (Table 5.3, most-probable),
   * FLASH technology for ALL sites (single-flash) — see note below,
   * baseload availability (`p_max_pu = capacity factor`),
-  * cost = Zuffi FLASH LCOE ($/MWh, already levelised), converted to an
-    annualised capital cost so the optimiser sees exactly that levelised cost:
-        capital_cost [$/MW/yr] = LCOE[$/MWh] * 8760 * CF.
+  * cost = Zuffi FLASH LCOE ($/MWh, already levelised), converted USD->EUR and
+    then to an annualised capital cost, so the optimiser sees exactly that
+    levelised cost in the model's own currency:
+        capital_cost [EUR/MW/yr] = LCOE[$/MWh] * USD_TO_EUR * 8760 * CF.
+
+CURRENCY (fixed 2026-09-13 -- was a real bug, see USD_TO_EUR below)
+-------------------------------------------------------------------
+PyPSA-Earth's cost base is **EUR**: `config.default.yaml` sets
+`output_currency: "EUR"`, and every row of the generated `costs_<year>.csv`
+carries an explicit EUR unit (e.g. `solar,investment,408.7174,EUR/kW_e`).
+The geothermal LCOEs from Zuffi and JICA are in **USD**. Until 2026-09-13 this
+script wrote those USD figures straight into `capital_cost`, i.e. the solver
+compared dollars against euros one-for-one and geothermal came out ~33% too
+expensive relative to every other technology. All runs produced before that
+date carry the bias.
 
 DATA SOURCE (single source of truth): `_thesis_inputs/JICA_Geothermal_Sites_Ethiopia.xlsx`
 — one row per prospect with JICA capacity, Zuffi FLASH LCOE and coordinates.
@@ -56,6 +68,18 @@ GEO_XLSX        = os.path.join("_thesis_inputs", "JICA_Geothermal_Sites_Ethiopia
 GEO_SHEET       = "Sheet1"
 GEO_CAPACITY_FACTOR = 0.90              # baseload flash-plant availability
 GEO_CARRIER     = "geothermal"
+
+# USD -> EUR. The site LCOEs (Zuffi, JICA) are in USD; the rest of the model is
+# in EUR (see the CURRENCY note in the module docstring). Value mirrors
+# `costs: default_exchange_rate` in config.default.yaml (0.7532 EUR/USD, the
+# 2013 ECB average) -- keep the two in sync if that config value ever changes.
+#
+# CAVEAT carried into the write-up: this is a single 2013-vintage rate, and the
+# source spreadsheet does not record which currency *year* Zuffi's and JICA's
+# figures are stated in. PyPSA-Earth's own cost base is likewise a mix of
+# vintages (its `currency_year` column spans 2010-2020) without deflation to a
+# common year, so a residual vintage mismatch remains on both sides.
+USD_TO_EUR = 0.7532
 
 # "frozen" scenario: today's installed geothermal in Ethiopia (Aluto-Langano ~7 MW)
 FROZEN_TODAY_MW = 7.0
@@ -124,18 +148,23 @@ def annuity(rate, n):
 
 
 def lcoe_to_capital_cost(lcoe_usd_per_mwh, capacity_factor):
-    """Annualised capital cost ($/MW/yr) such that a plant running at
+    """Annualised capital cost (EUR/MW/yr) such that a plant running at
     `capacity_factor` recovers exactly `lcoe_usd_per_mwh`. Geothermal is ~all
     capex / negligible fuel, so marginal_cost is ~0 and the whole levelised
-    cost is carried as an annualised capacity cost."""
-    return float(lcoe_usd_per_mwh) * 8760.0 * float(capacity_factor)
+    cost is carried as an annualised capacity cost.
+
+    NB the USD->EUR factor: the LCOE arrives in USD, but `capital_cost` is read
+    by the solver in the model's currency (EUR). Dropping it makes geothermal
+    ~33% too expensive against every other technology."""
+    return float(lcoe_usd_per_mwh) * USD_TO_EUR * 8760.0 * float(capacity_factor)
 
 
 def connection_capital_cost(distance_km):
-    """Annualised grid-connection cost ($/MW/yr) for a line of `distance_km`."""
+    """Annualised grid-connection cost (EUR/MW/yr) for a line of `distance_km`."""
     if not USE_CONNECTION_COST or not np.isfinite(distance_km):
         return 0.0
-    return LINE_USD_PER_MW_KM * float(distance_km) * annuity(CONN_WACC, LINE_LIFETIME)
+    return (LINE_USD_PER_MW_KM * USD_TO_EUR * float(distance_km)
+            * annuity(CONN_WACC, LINE_LIFETIME))
 
 
 # ── 3. Read JICA per-site data ───────────────────────────────────────────────
@@ -330,6 +359,10 @@ def inject(n, sites, extendable=True, frozen_today_mw=FROZEN_TODAY_MW):
                  else f"absent -> {frozen_today_mw} MW proxy at cheapest site"))
 
     n_b = sites.groupby([nearest_bus(buses, r.lon, r.lat) for r in sites.itertuples()]).size()
+    lo, hi = sites["lcoe_usd_mwh"].min(), sites["lcoe_usd_mwh"].max()
+    print(f"   currency: LCOE {lo:.1f}-{hi:.1f} $/MWh x {USD_TO_EUR} "
+          f"-> {lo * USD_TO_EUR:.1f}-{hi * USD_TO_EUR:.1f} EUR/MWh "
+          f"(model currency; see CURRENCY note)")
     print(f"   added {len(sites)} geothermal generators across {n_b.shape[0]} bus(es): "
           f"{dict(n_b)}")
     print(f"   total p_nom_max = {sites['cap_mw'].sum():.0f} MWe, "

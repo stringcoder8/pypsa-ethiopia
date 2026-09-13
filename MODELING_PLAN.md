@@ -28,7 +28,7 @@ scenario design. Companion to `RUNBOOK.md` (how to run) and
 
 > **Revision note (2026-07-02).** Two dimension reductions.
 > (1) Drought collapsed to a **single −50% inflow factor** (was −30/−45/−60),
-> cited to Tegenu et al. 2022 (*Applied Sciences* 12:1954, "Drought Scenario" =
+> cited to Mekonnen et al. 2022 (*Applied Sciences* 12:1954, "Drought Scenario" =
 > 50% hydro cut) and the 2022–23 event; hydro axis is now **normal vs −50%** (§3c).
 > (2) Demand = **two scenarios run**: **GEGIS** (low, PyPSA-native, empirically
 > accurate) and **Gebremeskel HEG** (high, rigorous bottom-up ≈ govt master plan),
@@ -43,12 +43,27 @@ scenario design. Companion to `RUNBOOK.md` (how to run) and
 > **available-vs-excluded** pair under one realistic **open-competition framing
 > with a CO₂ cap declining to net-zero by 2050** (Ethiopia's CRGE pledge) and a
 > **load-shedding backstop** (§3d). The diesel/emissions counterfactual becomes a
-> **qualitative, cited** argument (2015 & 2022–23 events; Tegenu et al. 2022) — not
+> **qualitative, cited** argument (2015 & 2022–23 events; Mekonnen et al. 2022) — not
 > modelled, since nothing emits under the cap. Scenario design is now a factorial
 > over **year (2030/40/50) × hydro (normal/−50%) × demand (GEGIS/HEG) × geothermal
 > (available/excluded)** (§6). **VOLL corrected** to an Ethiopia-sourced central
 > **1.0 €/kWh** (~$1,000/MWh), replacing the European 100 €/kWh default; sensitivity
 > conditional (§7). Diesel-cost sensitivity dropped (no fossil under the cap).
+
+> **Revision note (2026-09-02).** Alignment pass against the actual configs and
+> scripts; no design changes. (1) **Clusters 6 → 12** (§2, §9) — the production
+> configs `config.ET_2030/2040/2050.yaml` run at 12; the 6 survives only in the
+> legacy dev config. (2) **Temporal resolution corrected** (§3e, §9): reported
+> runs are a full calendar year at **4-hourly** resolution (~2,190 snapshots),
+> not 8,760 hourly steps. (3) **Fleet description completed** (§2): 32 units /
+> 12.2 GW, including 624 MW wind, 101 MW solar and the 25 MW Reppie
+> waste-to-energy plant, which the previous "biomass excluded" wording implied
+> were absent. (4) **HEG rescale factor** is computed per horizon year, not a
+> fixed ×8.4 (§3b). (5) **Citation corrected throughout: "Tegenu et al. 2022" →
+> Mekonnen et al. (2022)** — the Ethiopian drought paper (*Applied Sciences*
+> 12(4):1954) is by Mekonnen, Teferi, Kebede & Anandarajah; "Tegenu" appears
+> nowhere in its author list. Previous version:
+> `_backups/MODELING_PLAN_backup_20260902.md`.
 
 > **Revision note (2026-07-09).** Supervisor confirmed **the main factorial
 > (§6, the 18 clean-by-construction runs) is sufficient scope** — the
@@ -126,19 +141,44 @@ revision note above.
 
 ## 2. The model
 
-- **PyPSA-Earth**, per country, 6 clusters (development) → raise only if the
-  geothermal *location*/transmission story proves material (§9).
+- **PyPSA-Earth**, per country, **12 clusters** (`config.ET_2030/2040/2050.yaml`;
+  the 6-cluster setting survives only in the legacy dev config `config.ET.yaml`).
 - **Fleet:** curated real fleet in `data/custom_powerplants.csv` (from official
-  EEP list): GERD 5,150 MW, the hydro cascade, ~99 MW diesel, Aluto-Langano
-  7.3 MW geothermal, operational + under-construction, biomass excluded.
+  EEP list): **32 units, 12.2 GW**. Hydro 11.4 GW / 16 plants (GERD 5,150 MW,
+  Koysha 2,160 MW, Gibe III 1,870 MW), wind 624 MW / 6 farms, solar 101 MW,
+  oil 99 MW, Reppie waste-to-energy 25 MW, Aluto-Langano geothermal 7.3 MW;
+  operational + under-construction.
 - **Geothermal is endogenous** — added by `inject_geothermal.py` from the **JICA
   site inventory** (`_thesis_inputs/JICA_Geothermal_Sites_Ethiopia.xlsx`, sheet "JICA Sites"):
   one extendable generator per JICA prospect, attached to the nearest AC bus,
   **FLASH** technology (§3f), `p_nom_max` = the site's **JICA installed capacity**
   (Table 5.3, mode fallback), cost = **Zuffi FLASH LCOE**→`capital_cost =
-  LCOE×8760×CF`. Grid-connection cost is off by default (no distance column;
-  ~1–2% of capex — toggle `USE_CONNECTION_COST`). Only Aluto (7.3 MW) sits in the
-  fixed fleet; all new geothermal is a model build decision.
+  LCOE×USD_TO_EUR×8760×CF`. Grid-connection cost is off by default (no distance
+  column; ~1–2% of capex — toggle `USE_CONNECTION_COST`). Only Aluto (7.3 MW)
+  sits in the fixed fleet; all new geothermal is a model build decision.
+
+- **Currency basis = EUR.** PyPSA-Earth's cost data is in euro
+  (`config.default.yaml: costs.output_currency: "EUR"`; every `costs_<year>.csv`
+  row carries an explicit EUR unit, e.g. `solar,investment,408.7174,EUR/kW_e`).
+  The Zuffi and JICA geothermal LCOEs are in **USD**, so `inject_geothermal.py`
+  converts them at `USD_TO_EUR = 0.7532` (mirrors `costs.default_exchange_rate`,
+  the 2013 ECB average) before annualising.
+
+  > **Bug fixed 2026-09-13.** Until this date the injector wrote the raw USD
+  > LCOEs straight into `capital_cost`, so the optimiser compared dollars with
+  > euros one-for-one and geothermal was **~33% too expensive** against every
+  > other (EUR-denominated) technology — equivalently, its cost was 24.7% above
+  > the correct euro figure. The bias ran **against** geothermal and affects
+  > every run produced before the fix. Cap-weighted mean LCOE, corrected:
+  > Low (Zuffi) 28.1 $/MWh → **€21.2/MWh**, Middle (blend 0.5) 51.3 → **€38.6**,
+  > High (JICA) 74.2 → **€55.9**. Because all three cost scenarios shared the
+  > same unconverted path, their *relative* ordering was unaffected; what was
+  > wrong is the comparison against solar/wind/battery/hydro.
+  >
+  > Residual caveat: a single 2013-vintage rate is applied, and the source
+  > spreadsheet does not record the currency *year* of Zuffi's or JICA's
+  > figures. PyPSA-Earth's own cost base likewise mixes vintages
+  > (`currency_year` spans 2010–2020) without deflation to a common year.
 
 ---
 
@@ -221,7 +261,8 @@ historically under-delivered (5.2 GW actual in 2023 vs ~20 GW planned by 2025).
 > firm-capacity value is largest. Decision deferred.
 
 Implementation: PyPSA-Earth's load is GEGIS-based, so **Low** uses
-`load_options.prediction_year` directly. **High = a uniform ×8.4 rescale** of the
+`load_options.prediction_year` directly. **High = a uniform rescale** (factor computed per horizon year as
+HEG target / realised GEGIS total; ≈ ×7 in 2030, ×8.7 in 2040, ×8.5 in 2050) of the
 GEGIS profile to the HEG annual total (`apply_heg_demand.py`), preserving both the
 temporal shape and the spatial distribution across buses.
 
@@ -278,10 +319,10 @@ runoff and washes the drought back out) and breaks demand–weather-year
 consistency. So perturb hydro on the prepared network: scale reservoir
 `storage_units_t.inflow` (and run-of-river `p_max_pu`) by a **single factor
 representing a severe, documented drought: −50% inflow.** This matches the one
-published Ethiopia hydropower-drought model (Tegenu et al. 2022, *Applied
+published Ethiopia hydropower-drought model (Mekonnen et al. 2022, *Applied
 Sciences* 12(4):1954 — "Drought Scenario" = 50% hydro reduction) and the real
 2022–23 event (~−45–50%). Using one severity instead of a −30/−45/−60 sweep cuts
-the run count. Because the −50% magnitude is already well-established (Tegenu et
+the run count. Because the −50% magnitude is already well-established (Mekonnen et
 al. 2022; the 2022–23 event), it is taken as given — **no separate drought-year-
 cutout validation run**.
 
@@ -344,7 +385,7 @@ cells. This directly quantifies **how much diesel/OCGT gets built and burned, an
 the resulting CO₂**, when geothermal is and isn't there to cover the hydro gap —
 a clean, mechanism-honest version of the "missed opportunity" from the previous
 revision, not tied to an arbitrary yearly cap value. It is also literally what
-happened in **2015** and **2022–23** (Tegenu et al. 2022 modelled the same
+happened in **2015** and **2022–23** (Mekonnen et al. 2022 modelled the same
 "drought → HFO backup → CO₂ rise" mechanism), so the modelled result and the
 cited historical event reinforce each other. The model now answers two distinct
 questions: *(1) can a clean system stay reliable under drought and rising demand,
@@ -355,8 +396,11 @@ allowed, how much less of it gets burned when geothermal is available?*
 ### 3e. Simulation period = FULL YEAR (locked commitment)
 
 The dry *season* is the mechanism, so a representative week cannot carry the
-argument. **All reported results use a full-year (8760 h, 2013 ERA5 cutout) build**;
-the 1-week representative period is retired to a development/debugging tool only.
+argument. **All reported results use a full calendar year (2013 ERA5 cutout) at
+4-hourly resolution — ~2,190 snapshots** (`opts: [4H]`); the 1-week and the
+168H weekly period are retired to development/debugging tools only. The full
+year is the hard requirement (seasonality is the mechanism); 4H is the
+resolution that still resolves the diurnal cycle at tractable solve cost.
 This is a hard requirement, not a stretch goal — every number that enters the
 thesis comes from a full-year run.
 
@@ -380,7 +424,7 @@ as an optional cost sensitivity (the two differ ~2–4×; see §7).
 | Drought resilience | hydro collapses → shedding | inflow ×factor (−50%) | unserved energy, system cost |
 | Seasonal firmness | dry season (Oct–May) hydro dips | full-year run | dry-season shedding w/o geo |
 | Demand growth / industrialization | demand outpaces slow new hydro | demand GEGIS vs HEG, 2030/40/50 | required firm capacity; gap geo fills |
-| Emissions under stress | dry year → fossil backup | **modelled**: separate uncapped experiment, OCGT extendable, no `Co2L` (§3d, §6); cited corroboration (2015, 2022–23; Tegenu 2022) | ΔCO₂, Δdiesel (mandatory model output) |
+| Emissions under stress | dry year → fossil backup | **modelled**: separate uncapped experiment, OCGT extendable, no `Co2L` (§3d, §6); cited corroboration (2015, 2022–23; Mekonnen et al. 2022) | ΔCO₂, Δdiesel (mandatory model output) |
 | Hydro is not a free substitute | new dams are slow/contested (GERD ~13 yr; Koysha delayed since the 1990s) and share the same rainfall risk | hydro-extendable sensitivity, same −50% drought (§7) | geothermal still built? (robustness) |
 | Diversification / risk | hydro spatially correlated (one rainfall regime) | −50% + full-year | variance of unserved ↓ (discussion) |
 | (Export revenue, inertia, water use) | — | — | discussion-layer |
@@ -474,7 +518,7 @@ calm-year value proves interesting.
 > plan. Kept as written in case they're reinstated later.
 
 ~~**Plus validation:** 1 baseline run (§5). (No drought-year-cutout run — the −50%
-factor is taken as established from Tegenu et al. 2022 and the 2022–23 event, §3c.)~~
+factor is taken as established from Mekonnen et al. 2022 and the 2022–23 event, §3c.)~~
 
 ~~**Plus the mandatory emissions experiment (§3d, §4):** OCGT extendable, no `Co2L`
 constraint, at the **dry** cells × geo-available/excluded, run at **GEGIS demand**
@@ -584,7 +628,7 @@ reported for each X:
   generate this metric is demoted (§6, 2026-07-09). The main (clean-by-construction)
   factorial excludes fossil build entirely by design, so this row is out of scope
   for now; the diesel/CO₂ argument stays a **cited, qualitative** point (2015,
-  2022–23 events; Tegenu et al. 2022) rather than a modelled delta.
+  2022–23 events; Mekonnen et al. 2022) rather than a modelled delta.
 - **What's built instead** (solar / wind / storage MW) — the honest counterfactual
 - **Geothermal built** (MW, generation share, full-load hours) + reliability
   (% demand served)
@@ -605,18 +649,17 @@ optimiser built instead of geothermal when it didn't pick it.
   now superseded**): −50% hydro → 6.2 TWh unserved; geothermal (214 MWe) cuts it
   ~27% and eliminates diesel. ✅ Tanzania A/B (fossil-displacement, paused).
 - **Next (in order) — active scope:**
-  1. **Full-year network build** (8760 h, 2013 cutout). `config.ET.yaml` already
-     set: `load_shedding: 1.0`, `OCGT` removed from `extendable_carriers`,
-     `Co2L` dropped from `opts` (clean-by-construction, §3d). Wire in the
-     year-phased geothermal caps (§3a). A quick sanity check against §5's
+  1. ✅ **Full-year network build** (2013 cutout, 4H). `config.ET_2030/2040/2050.yaml`
+     set: 12 clusters, `load_shedding: 1.0`, `OCGT` removed from
+     `extendable_carriers`, `Co2L` dropped from `opts` (clean-by-construction,
+     §3d). Year-phased geothermal caps wired in (`inject_geothermal.py --year`). A quick sanity check against §5's
      targets before trusting results is still worth doing informally, even
      though the formal validation protocol is demoted.
   2. **Main factorial** (§6): the 12 geo-available cells (year × hydro × demand)
      for the progression + how much geothermal builds.
   3. **Geo-excluded twins** for the dry cells → the geothermal-value deltas (§8),
      completing the 18-run main factorial.
-  4. Raise clusters (10–20) **only if** the geothermal *location*/transmission
-     story proves material.
+  4. ✅ Clusters raised to 12 (done 2026; was 6 in development).
 
 **Deferred (not in current scope, kept for reference):**
 - Formal validation protocol as a separate deliverable (§5).
@@ -641,7 +684,7 @@ optimiser built instead of geothermal when it didn't pick it.
   static, EDGAR-baseline CO₂ cap, which is vacuous for Ethiopia's near-zero
   power-sector baseline at every horizon year. The diesel/emissions
   counterfactual is a **separate, mandatory, uncapped experiment** (§3d, §6, §8),
-  corroborated by cited historical events (2015, 2022–23; Tegenu et al. 2022).
+  corroborated by cited historical events (2015, 2022–23; Mekonnen et al. 2022).
 - **Zuffi FLASH LCOE is the central, optimistic cost case (~$22–29/MWh)** —
   Ethiopia's own PPAs and JICA's cost estimate run higher (~$60/MWh). Results are
   checked against this: if geothermal saturates its cap almost everywhere at the
@@ -664,7 +707,7 @@ optimiser built instead of geothermal when it didn't pick it.
 - **VOLL** drives the unserved-energy results → central 1.0 €/kWh (Ethiopia-sourced),
   with a conditional low/high sensitivity (§7); conclusions stated as robust only
   where they survive the range — ideally down to the low VOLL.
-- The −50% drought ×factor is calibrated from the literature (Tegenu et al. 2022;
+- The −50% drought ×factor is calibrated from the literature (Mekonnen et al. 2022;
   the 2022–23 event) and taken as established — no separate drought-year-cutout run.
 - Per-country, non-interconnected models → regional trade and KE/UG/DJ are
   discussion-layer only; not modeled quantitatively in this thesis.
