@@ -157,28 +157,40 @@ revision note above.
   column; ~1–2% of capex — toggle `USE_CONNECTION_COST`). Only Aluto (7.3 MW)
   sits in the fixed fleet; all new geothermal is a model build decision.
 
-- **Currency basis = EUR.** PyPSA-Earth's cost data is in euro
+- **Currency basis = EUR in 2020 prices.** PyPSA-Earth's cost data is in euro
   (`config.default.yaml: costs.output_currency: "EUR"`; every `costs_<year>.csv`
-  row carries an explicit EUR unit, e.g. `solar,investment,408.7174,EUR/kW_e`).
-  The Zuffi and JICA geothermal LCOEs are in **USD**, so `inject_geothermal.py`
-  converts them at `USD_TO_EUR = 0.7532` (mirrors `costs.default_exchange_rate`,
-  the 2013 ECB average) before annualising.
+  row carries an explicit EUR unit, e.g. `solar,investment,408.7174,EUR/kW_e`),
+  with reference year 2020 (`scripts/process_cost_data.py`:
+  `TECH_DATA_REFERENCE_YEAR = 2020`). Non-EUR inputs are converted at the 2020
+  average rate; no inflation adjustment is made — all rows are *assumed* to be
+  in 2020 prices, and the `currency_year` column is provenance only. The Zuffi
+  and JICA geothermal LCOEs are in **USD**, so `inject_geothermal.py` converts
+  them at the same rate PyPSA-Earth uses for its own USD inputs:
+  `USD_TO_EUR = 0.8772` (2020 ECB average) before annualising.
 
-  > **Bug fixed 2026-09-13.** Until this date the injector wrote the raw USD
-  > LCOEs straight into `capital_cost`, so the optimiser compared dollars with
-  > euros one-for-one and geothermal was **~33% too expensive** against every
-  > other (EUR-denominated) technology — equivalently, its cost was 24.7% above
-  > the correct euro figure. The bias ran **against** geothermal and affects
-  > every run produced before the fix. Cap-weighted mean LCOE, corrected:
-  > Low (Zuffi) 28.1 $/MWh → **€21.2/MWh**, Middle (blend 0.5) 51.3 → **€38.6**,
-  > High (JICA) 74.2 → **€55.9**. Because all three cost scenarios shared the
-  > same unconverted path, their *relative* ordering was unaffected; what was
-  > wrong is the comparison against solar/wind/battery/hydro.
+  > **Currency bug, fixed 2026-09-13 and corrected 2026-09-14.**
+  > (1) Until 2026-09-13 the injector wrote the raw USD LCOEs straight into
+  > `capital_cost` (factor 1.0): the optimiser compared dollars with euros
+  > one-for-one and geothermal was **~14% too expensive** against every other
+  > technology. (2) The first fix used 0.7532 — `costs.default_exchange_rate`,
+  > which is the 2013 rate and only PyPSA-Earth's *fallback* — making
+  > geothermal **~14% too cheap**. (3) Since 2026-09-14 the rate is 0.8772,
+  > consistent with the model's EUR-2020 basis. Every run solved before that
+  > carries one of the two biases and is superseded.
+  > Cap-weighted mean LCOE in model currency: Low (Zuffi) 28.1 $/MWh →
+  > **€24.6/MWh**, Middle (blend 0.5) 51.3 → **€45.0**, High (JICA) 74.2 →
+  > **€65.1**. All three cost scenarios always shared the same conversion, so
+  > their *relative* ordering was never affected; what was wrong is the
+  > comparison against solar/wind/battery/hydro.
   >
-  > Residual caveat: a single 2013-vintage rate is applied, and the source
-  > spreadsheet does not record the currency *year* of Zuffi's or JICA's
-  > figures. PyPSA-Earth's own cost base likewise mixes vintages
-  > (`currency_year` spans 2010–2020) without deflation to a common year.
+  > Why not a current exchange rate: it would state geothermal in euros of a
+  > different year than every other technology. (Numerically it barely matters
+  > — 2025 average 0.8865 vs 0.8772 — the 2013 rate was the outlier.)
+  >
+  > Residual caveat: the source LCOEs are not deflated to 2020 — JICA's are USD
+  > of the 2015 Master Plan, Zuffi's come from the Geothermal Atlas for Africa
+  > (presented 2022). This matches how PyPSA-Earth treats its own cost data,
+  > but should be stated as a limitation.
 
 ---
 

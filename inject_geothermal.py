@@ -15,16 +15,24 @@ generators built from the JICA Master Plan site inventory:
     levelised cost in the model's own currency:
         capital_cost [EUR/MW/yr] = LCOE[$/MWh] * USD_TO_EUR * 8760 * CF.
 
-CURRENCY (fixed 2026-09-13 -- was a real bug, see USD_TO_EUR below)
--------------------------------------------------------------------
-PyPSA-Earth's cost base is **EUR**: `config.default.yaml` sets
-`output_currency: "EUR"`, and every row of the generated `costs_<year>.csv`
-carries an explicit EUR unit (e.g. `solar,investment,408.7174,EUR/kW_e`).
-The geothermal LCOEs from Zuffi and JICA are in **USD**. Until 2026-09-13 this
-script wrote those USD figures straight into `capital_cost`, i.e. the solver
-compared dollars against euros one-for-one and geothermal came out ~33% too
-expensive relative to every other technology. All runs produced before that
-date carry the bias.
+CURRENCY (fixed 2026-09-13, rate corrected 2026-09-14 -- see USD_TO_EUR below)
+-------------------------------------------------------------------------------
+PyPSA-Earth's cost base is **EUR in 2020 prices**: `config.default.yaml` sets
+`output_currency: "EUR"`, `scripts/process_cost_data.py` fixes
+`TECH_DATA_REFERENCE_YEAR = 2020`, and every row of the generated
+`costs_<year>.csv` carries an explicit EUR unit (e.g.
+`solar,investment,408.7174,EUR/kW_e`). The geothermal LCOEs from Zuffi and JICA
+are in **USD**.
+
+History of the bias:
+  * until 2026-09-13 the USD figures went straight into `capital_cost` (factor
+    1.0), so geothermal was ~14% too expensive against every other technology;
+  * 2026-09-13 to 2026-09-14 the fix used 0.7532 (the 2013 rate, taken from
+    `costs.default_exchange_rate`, which is only PyPSA-Earth's fallback), so
+    geothermal was ~14% too cheap;
+  * from 2026-09-14 it uses 0.8772, the 2020 reference-year rate PyPSA-Earth
+    itself applies to USD inputs. Every run solved before this carries one of
+    the two biases and must be re-solved.
 
 DATA SOURCE (single source of truth): `_thesis_inputs/JICA_Geothermal_Sites_Ethiopia.xlsx`
 — one row per prospect with JICA capacity, Zuffi FLASH LCOE and coordinates.
@@ -70,16 +78,23 @@ GEO_CAPACITY_FACTOR = 0.90              # baseload flash-plant availability
 GEO_CARRIER     = "geothermal"
 
 # USD -> EUR. The site LCOEs (Zuffi, JICA) are in USD; the rest of the model is
-# in EUR (see the CURRENCY note in the module docstring). Value mirrors
-# `costs: default_exchange_rate` in config.default.yaml (0.7532 EUR/USD, the
-# 2013 ECB average) -- keep the two in sync if that config value ever changes.
+# in EUR of 2020 (see the CURRENCY note in the module docstring).
 #
-# CAVEAT carried into the write-up: this is a single 2013-vintage rate, and the
-# source spreadsheet does not record which currency *year* Zuffi's and JICA's
-# figures are stated in. PyPSA-Earth's own cost base is likewise a mix of
-# vintages (its `currency_year` column spans 2010-2020) without deflation to a
-# common year, so a residual vintage mismatch remains on both sides.
-USD_TO_EUR = 0.7532
+# 0.8772 is exactly what PyPSA-Earth uses for its own USD inputs: the 2020
+# average ECB rate returned by
+#   process_cost_data.get_yearly_currency_exchange_rate("USD", "EUR",
+#       future_exchange_rate_strategy="reference")      # TECH_DATA_REFERENCE_YEAR = 2020
+# Do NOT use `costs.default_exchange_rate` (0.7532) from config.default.yaml --
+# that is the 2013 rate and only a fallback for when no 2020 data exists.
+# A current rate would also be wrong: it would state geothermal in euros of a
+# different year than every other technology (2025 avg 0.8865, only ~1% off).
+#
+# CAVEAT carried into the write-up: the source LCOEs are not deflated to 2020
+# -- JICA's figures are USD of its 2015 Master Plan, Zuffi's come from the
+# Geothermal Atlas for Africa (presented 2022). PyPSA-Earth treats its own cost
+# data the same way (all rows *assumed* to be in 2020 prices, no inflation
+# adjustment; its `currency_year` column is provenance only).
+USD_TO_EUR = 0.8772
 
 # "frozen" scenario: today's installed geothermal in Ethiopia (Aluto-Langano ~7 MW)
 FROZEN_TODAY_MW = 7.0
@@ -154,8 +169,8 @@ def lcoe_to_capital_cost(lcoe_usd_per_mwh, capacity_factor):
     cost is carried as an annualised capacity cost.
 
     NB the USD->EUR factor: the LCOE arrives in USD, but `capital_cost` is read
-    by the solver in the model's currency (EUR). Dropping it makes geothermal
-    ~33% too expensive against every other technology."""
+    by the solver in the model's currency (EUR of 2020). Dropping it makes
+    geothermal ~14% too expensive against every other technology."""
     return float(lcoe_usd_per_mwh) * USD_TO_EUR * 8760.0 * float(capacity_factor)
 
 
